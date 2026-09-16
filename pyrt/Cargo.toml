@@ -1,0 +1,17 @@
+[package]
+name = "pyrt"
+description = "The Ferrite runtime: Python semantics for transpiled Rust."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# pyrt deliberately does NOT enable pyo3/extension-module: that feature
+# suppresses linking libpython, which would break `cargo test -p pyrt`. Only
+# generated crates enable it (ADR-0009, TRD §2).
+#
+# Dependencies are added by the cards that need them (T-010 onward) using
+# `.workspace = true`, so the pinned versions stay in one place (TRD §2).
+
+[lints.rust]
+unsafe_code = "forbid"
