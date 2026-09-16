@@ -1,0 +1,95 @@
+name: Bug report
+description: Something diverged, panicked, or was rejected incorrectly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ferrite's only real claim is that the emitted Rust behaves identically to the Python.
+        A **conformance divergence** is the highest-severity bug there is; a wrong `error[FE...]`
+        is second. Both need the same three things to be actionable: the file, the command, and
+        the full error. See `docs/TESTING.md` §7 for the triage order.
+
+        For a design question rather than a defect, use Discussions instead.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of failure is this?
+      options:
+        - Conformance divergence (Rust and Python disagree)
+        - False success (verify reported green but the behaviour differs)
+        - Wrong rejection (valid PSS-0 was rejected)
+        - Compile error in generated Rust
+        - pyrt panic, or the host process aborted
+        - Benchmark or tooling problem
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: error-code
+    attributes:
+      label: Error code
+      description: 'The `FE###` code from the error block, if there was one. Internal codes FE200, FE300, FE301 and FE403 are Ferrite bugs, not user errors.'
+      placeholder: 'FE011'
+    validations:
+      required: false
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command you ran
+      description: Verbatim, including flags. `ferrite verify` requires `--tests`; without tests there is no guarantee.
+      render: shell
+      placeholder: uv run ferrite verify scoring.py --tests tests/test_scoring.py
+    validations:
+      required: true
+
+  - type: textarea
+    id: input
+    attributes:
+      label: The Python input
+      description: |
+        The smallest PSS-0 module that reproduces it. Cut the fixture down until it stops
+        failing — the last thing you removed is the bug (`docs/TESTING.md` §7 step 5).
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: The full output
+      description: The complete error block or traceback, not a summary of it.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: generated
+    attributes:
+      label: Generated Rust (if relevant)
+      description: 'The formatted output from `ferrite_out/<module>/src/lib.rs`. Remember that redundant `.clone()` and `Rc<RefCell<..>>` everywhere are intended — see ADR-0002 and ADR-0003 before reporting them.'
+      render: rust
+    validations:
+      required: false
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: 'Output of: uv run python -c "import ferrite; print(ferrite.__version__)" ; rustc --version ; maturin --version'
+      placeholder: 0.1.0.dev0 / rustc 1.97.1 / maturin 1.15.0
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: triage
+    attributes:
+      label: Triage already done
+      options:
+        - label: The Python itself passes the suite when run with `FERRITE_IMPL=python` (so the fixture is correct, not the transpiler)
+          required: false
+        - label: I checked `docs/SEMANTICS.md` §14 to see whether this is a documented deviation (ID-1..ID-6)
+          required: false

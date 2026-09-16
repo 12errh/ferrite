@@ -1,0 +1,17 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Start here — AGENTS.md
+    url: https://github.com/12errh/ferrite/blob/main/AGENTS.md
+    about: The operating manual. Read it before your first edit; it applies to humans too.
+  - name: Design question or ADR proposal
+    url: https://github.com/12errh/ferrite/discussions
+    about: Anything marked [LOCKED] in the TRD needs a docs/DECISIONS.md record before code moves.
+  - name: Is this construct accepted?
+    url: https://github.com/12errh/ferrite/blob/main/docs/SUBSET.md
+    about: SUBSET.md is the normative PSS-0 grammar. Anything not named there is rejected by design.
+  - name: Is this a documented deviation?
+    url: https://github.com/12errh/ferrite/blob/main/docs/SEMANTICS.md
+    about: Section 14 lists every accepted divergence from CPython (ID-1..ID-6), each with a pinning test.
+  - name: The generated Rust looks bad
+    url: https://github.com/12errh/ferrite/blob/main/docs/DECISIONS.md
+    about: Redundant clones and Rc<RefCell<..>> everywhere are intended. Read ADR-0002 first.
