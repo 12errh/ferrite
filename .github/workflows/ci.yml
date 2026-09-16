@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  transpiler:
+    name: transpiler (ruff, mypy, unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run mypy ferrite/
+      - run: uv run pytest tests/unit
+
+  runtime:
+    name: pyrt (build, test, clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p pyrt
+      - run: cargo test -p pyrt
+      - run: cargo clippy -p pyrt -- -D warnings
+
+# Gates NOT yet enabled — each is added by the card that makes it pass, because
+# CI must be green on every commit and its directory does not exist yet
+# (TRD §11). Do not assume these were forgotten.
+#
+#   5  uv run pytest tests/harness             T-004  (tests OF the harness)
+#   6  uv run pytest tests/golden              T-017  (codegen determinism)
+#   7  uv run pytest tests/conformance         T-019  (behavioural equivalence)
+#   8  uv run pytest tests/property            T-054  (differential fuzzing)
+#   9  bench/report.py --check-regressions     T-055  (S1-S4 must not drop)

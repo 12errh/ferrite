@@ -1,0 +1,21 @@
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# --- Rust -------------------------------------------------------------------
+target/
+
+# --- Ferrite build products (TRD §9) ----------------------------------------
+# `ferrite build` writes a crate per module here; `ferrite verify` writes the
+# report and the per-test capture.
+ferrite_out/
+*.so
+ferrite_report.json
+ferrite_results.json
+repair.log

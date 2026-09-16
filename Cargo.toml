@@ -1,0 +1,27 @@
+# Rust workspace root (TRD §9, ADR-0009).
+#
+# Every Rust command in AGENTS.md, TRD §11 and PLAN.md is workspace-scoped
+# (`cargo build -p pyrt`, `cargo test -p pyrt`, `cargo clippy -p pyrt`), which
+# needs a workspace root to exist.
+
+[workspace]
+resolver = "2"
+members = ["pyrt"]
+
+# Load-bearing, not cosmetic. `ferrite build` writes a standalone crate per
+# module into ferrite_out/, and tests/harness/fixtures/fib/fib_rs/ is a
+# hand-written standalone crate. Without these exclusions the workspace adopts
+# them and `cargo build -p pyrt` starts building them too.
+exclude = ["ferrite_out", "tests"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# TRD §2 — the only crates generated output may use. Adding a crate here is a
+# TRD edit first. `pyrt` must NOT enable pyo3/extension-module (ADR-0009);
+# generated crates do, because maturin builds them.
+pyo3 = { version = "0.22" }
+indexmap = "2"
