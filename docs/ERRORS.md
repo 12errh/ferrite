@@ -19,14 +19,16 @@ Three failure modes it prevents:
 
 | Range | Module | Category |
 |---|---|---|
-| FE001–FE049 | `frontend/subset.py` | unsupported construct |
-| FE050–FE099 | `frontend/validate.py` | annotation / pyright |
-| FE100–FE149 | `types/infer.py` | inference failure |
+| FE001–FE049 | `frontend/subset.py`, plus FE012–FE014 in `types/infer.py` | unsupported construct, input-contract violation |
+| FE050–FE099 | `frontend/validate.py`, `types/model.py` | annotation, type-expression, pyright |
+| FE100–FE149 | `types/infer.py` | **RESERVED** for v0.2 — nothing in v0.1 raises these |
 | FE200–FE249 | `ir/lower.py` | lowering failure |
 | FE300–FE349 | `codegen/` | emission failure |
 | FE400–FE449 | `verify/` | build / conformance failure |
 
 Never reuse a retired code. Mark it `RETIRED` and move on.
+
+**Why FE012–FE014 sit in the frontend block.** They are inference failures, but they describe the *input contract* (R-2, R-3) and are detected before lowering. They are raised from `types/infer.py` and documented in SUBSET.md §7. The FE100–FE149 block is a forward reservation for the v0.2 inferencer; a RESERVED block is exempt from `test_error_catalog_sync.py` until something actually raises a code in it.
 
 ---
 
@@ -47,6 +49,8 @@ error[FE001]: unsupported construct `Lambda`
 
 **Every error must supply all four of:** `note` (what is wrong), `help` (what to do instead), `see` (the rule or doc section), and a `Span`. An error missing `help` fails `tests/test_error_catalog_sync.py`.
 
+The block above is the **normative** rendering. `tests/unit/test_diagnostics.py` (T-002) asserts it against it character-for-character, including the `= see:` line. The snippet in `PRD.md` §F2 is an abridged copy that omits the `see` line; when the two disagree, this file wins. Constructor: `FerriteError(code, span, note, help, see)`.
+
 ---
 
 ## 4. Catalog
@@ -65,7 +69,7 @@ error[FE001]: unsupported construct `Lambda`
 | FE008 | `math.{name}` is not supported | see the supported list in SUBSET.md §1.1 |
 | FE009 | `global`/`nonlocal` is not supported | pass state as a parameter and return it |
 | FE010 | unhashable {dict key\|set element} type `{ty}` | keys must be `int`, `str`, `bool`, or a tuple of those (R-4) |
-| FE011 | `{name}` is assigned inside `try` but not initialised before it | add `{name}: {ty} = <default>` before the `try` (R-7) |
+| FE011 | `{name}` is assigned inside `try` but is not bound on every path out of it | assign it in every `except` handler, or add `{name}: {ty} = <default>` before the `try` (R-7) |
 | FE012 | `{name}` would change type from `{old}` to `{new}` | use a new variable name (R-2) |
 | FE013 | `{name}` is defined inside a block and used after it | declare and initialise it before the block (R-3) |
 | FE014 | cannot infer the type of this expression | add an annotation to the enclosing assignment |
@@ -89,7 +93,8 @@ error[FE001]: unsupported construct `Lambda`
 | FE032 | `is` may only be used with `None` | use `==` for value comparison (R-16) |
 | FE033 | `{name}` shadows a builtin | choose a different name (R-18) |
 | FE034 | decorator `@{name}` is not supported | only `@dataclass` is supported |
-| FE035 | cannot assign to a field of a frozen dataclass | remove `frozen=True`, or construct a new instance |
+| FE035 | **RETIRED** — renumbered `FE211`; frozen-field assignment is detected at lowering, not in the subset gate | — |
+| FE036 | identifier `{name}` is reserved for the emitter | rename it without a leading `__` (R-19) |
 
 ### FE050–FE099 — annotation and type-checking
 
@@ -105,7 +110,9 @@ error[FE001]: unsupported construct `Lambda`
 | FE057 | `Any` is not supported | give the value a concrete type |
 | FE060 | pyright reported an error: {message} | fix the type error in your Python before transpiling |
 
-### FE100–FE149 — inference
+### FE100–FE149 — RESERVED (v0.2, not raised by v0.1)
+
+v0.1 raises inference failures as **FE012**, **FE013**, and **FE014** (see the block above), because they are input-contract violations detected before lowering. The rows below are the planned v0.2 catalogue and must not be raised until this block is un-reserved.
 
 | Code | Message | Help |
 |---|---|---|
@@ -124,6 +131,7 @@ error[FE001]: unsupported construct `Lambda`
 | FE200 | internal: no lowering rule for `{node}` | this is a Ferrite bug — please file it with the source snippet |
 | FE201 | slice step of 0 | use a non-zero step |
 | FE210 | assignment target `{form}` is not supported | assign to a name, subscript, or attribute |
+| FE211 | cannot assign to a field of a frozen dataclass | remove `frozen=True`, or construct a new instance |
 
 ### FE300–FE349 — emission
 

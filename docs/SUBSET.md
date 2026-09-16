@@ -37,7 +37,7 @@ import math
 
 Any other import → `FE007`.
 
-The `math` subset that transpiles: `sqrt floor ceil fabs pow log log2 log10 exp sin cos tan atan atan2 hypot pi e inf tau isnan isinf isclose`. Anything else on `math` → `FE008`.
+The `math` subset that transpiles: `sqrt floor ceil fabs pow log log2 log10 exp sin cos tan atan atan2 hypot pi e inf tau isnan isinf isclose`. Each maps 1:1 to an `f64` method or an `std::f64::consts` constant (SEMANTICS §12). Anything else on `math` → `FE008`.
 
 ---
 
@@ -59,7 +59,7 @@ Nesting is unrestricted: `dict[str, list[tuple[int, float]]]` is valid.
 
 ### 2.2 Rejected type expressions
 
-`Any` (`FE050`) · `Union[A, B]` where neither is `None` (`FE051`) · `Callable` (`FE052`) · `TypeVar` / generics (`FE053`) · unparameterised `list` / `dict` / `set` (`FE054`) · string forward references (`FE055`) · `Iterator` / `Iterable` / `Sequence` (`FE056`)
+`Any` (`FE057`) · `Union[A, B]` where neither is `None` (`FE051`) · `Callable` (`FE052`) · `TypeVar` / generics (`FE053`) · unparameterised `list` / `dict` / `set` (`FE054`) · string forward references (`FE055`) · `Iterator` / `Iterable` / `Sequence` (`FE056`)
 
 `Optional[T]` and `T | None` are both accepted and mean the same thing.
 
@@ -112,7 +112,7 @@ Nesting is unrestricted: `dict[str, list[tuple[int, float]]]` is valid.
 | Containers | `[...]` `{...}` `{k: v}` `(...)` literals |
 | Comprehensions | list, dict, set — single `for`, optional single `if` (R-17) |
 
-**Rejected:** generator expressions (`FE003`) · starred expressions (`FE005`) · nested comprehension `for` clauses (`FE020`) · conditional expressions in comprehension output when branch types differ (`FE021`)
+**Rejected:** generator expressions (`FE003`) · starred expressions (`FE005`) · nested comprehension `for` clauses (`FE020`) · a ternary inside a comprehension whose branches differ in type (`FE021`)
 
 ---
 
@@ -166,13 +166,13 @@ These are the rules that are not expressible as "which AST nodes are allowed." E
 
 | ID | Rule | Error | Why |
 |---|---|---|---|
-| **R-1** | Every function parameter and return value carries a type annotation. No `Any`. | FE050 | We propagate types, we don't infer them. |
+| **R-1** | Every function parameter and return value carries a type annotation. `Any` is not a usable type (`FE057`, §2.2). | FE050 | We propagate types, we don't infer them. |
 | **R-2** | A local's type is fixed at first binding. Rebinding with a different type is an error. | FE012 | Rust locals are monomorphic. |
 | **R-3** | A local first bound inside an `if`/`while`/`for` body is not visible after that block. | FE013 | Avoids uninitialised-variable emission. |
 | **R-4** | `dict` keys and `set` elements must be `int`, `str`, `bool`, or a `tuple` of those. | FE010 | `f64` is not `Hash` in Rust. |
 | **R-5** | Classes must be decorated `@dataclass` and must not inherit. | FE004 | No trait/vtable machinery in v0.1. |
 | **R-6** | Functions are module-level or dataclass methods. No nested functions, no closures. | FE025 | Closures require capture analysis. |
-| **R-7** | Any local assigned inside a `try` body must be declared and initialised **before** the `try`. | FE011 | The IIFE lowering (SEMANTICS §10) needs the binding to exist. |
+| **R-7** | Every local the `try` body assigns must be **bound on every path out of the whole `try` statement**: assigned in each `except` handler, or declared and initialised before the `try` (or both). | FE011 | The IIFE lowering (SEMANTICS §10) must yield a value on both the `Ok` and the `Err` arm. |
 | **R-8** | A `for` target is a simple name, or a flat tuple of simple names. No nested destructuring. | FE026 | |
 | **R-9** | Default argument values must be immutable literals (`int float str bool None` or tuples of those). | FE027 | Python's mutable-default trap; also simplifies emission. |
 | **R-10** | An `except` handler names exactly one exception type and binds at most one name. No bare `except:`, no tuples of types. | FE028 | |
@@ -184,6 +184,7 @@ These are the rules that are not expressible as "which AST nodes are allowed." E
 | **R-16** | `is` and `is not` may only be used with `None`. | FE032 | Python identity has no Rust equivalent for value types. |
 | **R-17** | Comprehensions have exactly one `for` clause and at most one `if` clause. | FE020 | |
 | **R-18** | A function may not shadow a builtin name or a module constant. | FE033 | |
+| **R-19** | Identifiers beginning with `__` (two underscores) are reserved for the emitter and are rejected in user code. | FE036 | The IIFE and dataclass lowerings introduce temporaries (`__t0`, `__v`, `__e`, `__s`); a user variable with the same name would collide silently. |
 
 ---
 
@@ -202,6 +203,7 @@ These are the rules that are not expressible as "which AST nodes are allowed." E
 | `global` / `nonlocal` | FE009 |
 | unhashable dict key / set element | FE010 |
 | uninitialised local assigned in `try` | FE011 |
+| local assigned in `try` but not bound on every path out of it | FE011 |
 | local changes type | FE012 |
 | local escapes its block | FE013 |
 | type cannot be inferred | FE014 |
@@ -225,6 +227,10 @@ These are the rules that are not expressible as "which AST nodes are allowed." E
 | `is` with non-`None` | FE032 |
 | shadowed builtin | FE033 |
 | decorator other than `@dataclass` | FE034 |
+| identifier starting with `__` | FE036 |
+| `Any` in an annotation | FE057 |
+| pyright reports a type error | FE060 |
+| assignment to a field of a frozen dataclass (detected at lowering, SEMANTICS §11) | FE211 |
 
 ---
 

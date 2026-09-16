@@ -84,6 +84,20 @@ indexmap  = "2"
 ```
 No other crate may appear in generated `Cargo.toml` without editing this table.
 
+The canonical versions live once in the root `Cargo.toml` under `[workspace.dependencies]`; `pyrt/Cargo.toml` references them with `.workspace = true`, and generated crates pin them literally as above.
+
+**`pyrt` must not enable `pyo3/extension-module`.** That feature suppresses linking libpython, which breaks `cargo test -p pyrt` (T-010 onward). Only *generated* crates, which maturin builds, enable it. This asymmetry is deliberate — do not "unify" it.
+
+**Python dependencies** (pinned in `pyproject.toml`, installed by `uv sync`):
+
+| Group | Packages |
+|---|---|
+| runtime | `typer` |
+| dev (default dependency group) | `pytest hypothesis pyright maturin ruff mypy` |
+| optional extra `repair` | `anthropic` |
+
+`maturin` and `pyright` are hard requirements of F1/F3 and T-014 respectively. They are declared as dependencies so `uv sync` provisions them and `uv run` resolves them without a global install.
+
 ---
 
 ## 3. The semantic model — the core of the product
@@ -175,7 +189,7 @@ let x: i64 = match __t0 {
 };
 ```
 
-This works because mutable containers are `Rc` (cloned into the closure freely, still aliasing the original). It breaks only for scalar locals mutated inside `try`, which is why PSS-0 rule **R-7** requires: *any local assigned inside a `try` body must be declared and initialised before the `try` statement.* Enforced in `subset.py`, error `FE011`.
+This works because mutable containers are `Rc` (cloned into the closure freely, still aliasing the original). It breaks for scalar locals that the body assigns but a handler does not, because then the `Err` arm has no value to yield — hence PSS-0 rule **R-7**: *every local the `try` body assigns must be bound on every path out of the whole `try` statement — assigned in each `except` handler, or declared and initialised before the `try`.* Detected before lowering, error `FE011`. If a handler does not assign such a local, the `Err` arm yields the pre-`try` value; the partial mutations a failed body performed are **not** observable (documented in SEMANTICS §10.2).
 
 `finally` lowers to a block executed on both arms before the `match` result is used.
 
@@ -201,21 +215,30 @@ Located at `pyrt/`. This is ordinary hand-written Rust, fully unit-tested on the
 
 ```
 pyrt/src/
-  lib.rs      re-exports; PyResult<T>
-  err.rs      PyErr, PyErrKind, constructors, Display
-  int.rs      add_i64 sub_i64 mul_i64 floordiv modulo truediv pow abs_i64
-  str.rs      PyStr: new len getitem slice split join strip upper lower
-              startswith endswith replace find count format_args
+  lib.rs      re-exports; PyResult<T>; Truthy / ToPyStr / ToPyBool traits
+  err.rs      PyErr, PyErrKind, constructors, Display,
+              impl From<PyErr> for pyo3::PyErr
+  int.rs      add_i64 sub_i64 mul_i64 neg_i64 floordiv modulo truediv
+              pow_i64 abs_i64 floor ceil round divmod
+  str.rs      PyStr (Rc<String>): from / From<&str> len getitem slice split
+              rsplit join strip lstrip rstrip upper lower title capitalize
+              startswith endswith replace find rfind index count isdigit
+              isalpha isalnum isspace zfill ljust rjust removeprefix
+              removesuffix contains format_args fstr
   list.rs     PyList<T>: new from_vec len getitem setitem slice append
-              extend insert pop remove sort index count clear iter_snapshot
+              extend insert pop remove sort index count clear copy reverse
+              contains iter_snapshot
   dict.rs     PyDict<K,V>: new len getitem setitem get keys values items
-              pop setdefault update contains clear
+              pop setdefault update contains clear copy
   set.rs      PySet<T>: new len add discard remove contains update clear
-              union intersection difference
+              copy union intersection difference
   obj.rs      PyObj<T>: Rc<RefCell<T>> newtype with borrow helpers
-  builtins.rs range enumerate zip min max sum sorted any all reversed
-              to_int to_float to_str to_bool
+  builtins.rs range enumerate zip min max sum_i64 sum_f64 sorted sorted_rev
+              any all reversed to_int to_float to_str_any to_bool print_args
+              cmp_list
 ```
+
+**Non-negotiable invariant:** every name `SEMANTICS.md` emits must exist in this list. SEMANTICS is the consumer; this list is the contract. If emission needs something that is not here, the fix is to add it here *first*, then to `pyrt`, then to the emitter.
 
 **Non-negotiable invariants:**
 
@@ -290,6 +313,8 @@ comprehensions (→ `Let` + `ForEach` + `append`) · aug-assign (`x += 1` → `A
 
 There is no unification, no type variables, no backtracking. If you find yourself wanting them, you have left PSS-0 — narrow the subset instead of widening the inferencer.
 
+`FE012`, `FE013`, and `FE014` are raised **by this pass**, even though they are numbered inside the frontend block. They describe the input contract (R-2, R-3) and are detected before lowering; see ERRORS.md §2 for why.
+
 ---
 
 ## 7. Verification harness — the product **[SPEC]**
@@ -339,14 +364,14 @@ Reserve ranges so codes never collide across modules.
 
 | Range | Module | Meaning |
 |---|---|---|
-| FE001–FE049 | `frontend/subset.py` | unsupported construct |
-| FE050–FE099 | `frontend/validate.py` | pyright / annotation errors |
-| FE100–FE149 | `types/infer.py` | inference failures |
+| FE001–FE049 | `frontend/subset.py`, FE012–FE014 from `types/infer.py` | unsupported construct / input-contract violation |
+| FE050–FE099 | `frontend/validate.py`, `types/model.py` | pyright / annotation / type-expression errors |
+| FE100–FE149 | `types/infer.py` | **RESERVED** — nothing in v0.1 raises these (ERRORS.md §4) |
 | FE200–FE249 | `ir/lower.py` | lowering failures |
 | FE300–FE349 | `codegen/` | emission failures |
 | FE400–FE449 | `verify/` | build / conformance failures |
 
-Every error is raised as `FerriteError(code, span, note, help)` and rendered by a single formatter in `ferrite/diagnostics.py`. No `print()` or bare `raise ValueError` anywhere in the codebase. Enforced by `tests/test_no_bare_errors.py`.
+Every error is raised as `FerriteError(code, span, note, help, see)` and rendered by a single formatter in `ferrite/diagnostics.py`. The rendered form is **normative in `ERRORS.md` §3** and is asserted character-for-character by `tests/unit/test_diagnostics.py` (T-002). No `print()` or bare `raise ValueError` anywhere in the codebase. Enforced by `tests/test_no_bare_errors.py`.
 
 ---
 
@@ -354,33 +379,53 @@ Every error is raised as `FerriteError(code, span, note, help)` and rendered by 
 
 ```
 ferrite/
-├── AGENTS.md                  ← read this first if you are an AI agent
+├── AGENTS.md                  ← repository ROOT, not docs/. Read first.
 ├── README.md
+├── Cargo.toml                 ← [workspace] root: members = ["pyrt"]
+│                                excludes ferrite_out/ and tests/ — see note below
 ├── pyproject.toml             uv-managed
+├── uv.lock
+├── .gitignore
 ├── docs/
 │   ├── PRD.md  TRD.md  PLAN.md
 │   ├── SUBSET.md              ← normative PSS-0 grammar
-│   └── SEMANTICS.md           ← Python→Rust mapping, generated from tests
+│   ├── SEMANTICS.md           ← Python→Rust mapping, generated from goldens
+│   ├── ERRORS.md              ← normative diagnostic catalog
+│   ├── TESTING.md             ← fixture conventions, benchmark method
+│   └── DECISIONS.md           ← ADR log
 ├── ferrite/
-│   ├── cli.py  diagnostics.py
-│   ├── frontend/  parse.py  subset.py  validate.py
-│   ├── types/     model.py  infer.py
-│   ├── ir/        nodes.py  lower.py  passes/
-│   ├── codegen/   rust_ast.py  emit.py  mangle.py  scaffold.py
-│   └── verify/    cargo.py  harness.py  fuzz.py  repair.py
-├── pyrt/                      ← Rust runtime crate
+│   ├── __init__.py  cli.py  diagnostics.py
+│   ├── frontend/  __init__.py  parse.py  subset.py  validate.py
+│   ├── types/     __init__.py  model.py  infer.py
+│   ├── ir/        __init__.py  nodes.py  lower.py  passes/
+│   ├── codegen/   __init__.py  rust_ast.py  emit.py  mangle.py  lint.py  scaffold.py
+│   └── verify/    __init__.py  cargo.py  harness.py  swap.py  capture.py
+│                  compare.py  fuzz.py  repair.py
+├── pyrt/                      ← Rust runtime crate (no pyo3/extension-module)
 │   ├── Cargo.toml
 │   └── src/  lib.rs err.rs int.rs str.rs list.rs dict.rs set.rs obj.rs builtins.rs
+├── examples/                  ← quickstart scripts referenced by README and AGENTS.md
+├── tools/                     ← gen_semantics.py (T-081)
 ├── tests/
-│   ├── golden/                <name>/input.py + expected.rs
-│   ├── conformance/           <name>/mod.py + test_mod.py
-│   ├── property/
-│   └── harness/
+│   ├── __init__.py            ← tests is an importable package (TESTING.md §4)
+│   ├── unit/                  fast, no subprocess, no cargo
+│   ├── golden/                <name>/input.py + expected.rs [+ meta.toml]
+│   ├── conformance/           <name>/mod.py + test_mod.py [+ meta.toml]
+│   ├── property/              strategies.py + differential fuzzing
+│   └── harness/               fixtures/fib/ + tests OF the test machinery
 ├── bench/
-│   ├── corpus/                50 frozen modules
+│   ├── corpus/                <module>/{mod.py,test_mod.py,bench.py} — 50 frozen
 │   └── report.py
 └── .github/workflows/ci.yml
 ```
+
+**Why a root `Cargo.toml` exists.** Every Rust command in `AGENTS.md` and `PLAN.md` is workspace-scoped (`cargo build -p pyrt`, `cargo test -p pyrt`, `cargo clippy -p pyrt`), which requires a workspace root. `members = ["pyrt"]` only; `exclude = ["ferrite_out", "tests"]` is not cosmetic — without it, a generated crate under `ferrite_out/` and the hand-written fixture crate under `tests/harness/fixtures/fib/fib_rs/` would both be pulled into the workspace and fail to build standalone.
+
+**Why `tests/__init__.py` exists.** `TESTING.md` §4 does `from tests.property.strategies import strategy_for`, so `tests` must be a real package, not a namespace directory.
+
+**Build products are not in this tree:** `ferrite_out/`, `target/`, `.venv/`, `__pycache__/`, `*.so`, `ferrite_report.json`, `ferrite_results.json` are all gitignored. `ferrite_out/` is where `ferrite build` writes a crate per module.
+
+**Module files appear with the card that implements them.** This tree is the target shape, not a scaffold requirement — T-001 creates the package `__init__.py` files, and each module file lands with its task card. Empty stub modules are not created "to fill in the tree"; an empty module is a lie about what exists.
 
 ---
 
@@ -404,10 +449,16 @@ If S4 fails, the fix is `--opt` (F7) and a `Vec<char>` fast path for indexed str
 
 `.github/workflows/ci.yml` must run, and block merge on:
 
-1. `uv run pytest tests/golden` — codegen determinism
-2. `uv run pytest tests/conformance` — behavioural equivalence
-3. `uv run pytest tests/property` — differential fuzzing
-4. `cargo test -p pyrt` — runtime unit tests
-5. `cargo clippy -p pyrt -- -D warnings`
-6. `uv run ruff check . && uv run mypy ferrite/` — the transpiler itself is typed
-7. `uv run python bench/report.py --check-regressions` — S1–S4 must not drop
+| # | Gate | Live from |
+|---|---|---|
+| 1 | `uv run pytest tests/unit` — the transpiler's own units | T-001 |
+| 2 | `uv run ruff check . && uv run mypy ferrite/` — the transpiler itself is typed | T-001 |
+| 3 | `cargo build -p pyrt && cargo test -p pyrt` — runtime unit tests | T-001 (tests accumulate from T-010) |
+| 4 | `cargo clippy -p pyrt -- -D warnings` | T-001 |
+| 5 | `uv run pytest tests/harness` — tests OF the harness | T-004 |
+| 6 | `uv run pytest tests/golden` — codegen determinism | T-017 |
+| 7 | `uv run pytest tests/conformance` — behavioural equivalence | T-019 |
+| 8 | `uv run pytest tests/property` — differential fuzzing | T-054 |
+| 9 | `uv run python bench/report.py --check-regressions` — S1–S4 must not drop | T-055 |
+
+**A gate is added by the card that makes it pass**, in the same PR. Never earlier — CI must be green on every commit — and never later, because an un-gated suite silently rots. Gates 5–9 are staged because their directories do not exist until the enabling card. The staging table lives in `ci.yml` as a comment so the next person can see what is deliberately missing rather than assuming it was forgotten.

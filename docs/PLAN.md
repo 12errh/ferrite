@@ -95,15 +95,27 @@ You write the Rust by hand this week. That is deliberate.
 ---
 ### T-001 — Repo scaffold
 **Depends on:** —
-**Files:** `pyproject.toml`, `ferrite/__init__.py`, `pyrt/Cargo.toml`, `.github/workflows/ci.yml`, `docs/`
+**Files:** `Cargo.toml` (workspace root), `pyproject.toml`, `uv.lock`, `.gitignore`, `ferrite/__init__.py`, `pyrt/Cargo.toml`, `pyrt/src/lib.rs`, `tests/__init__.py`, `tests/unit/__init__.py`, `.github/workflows/ci.yml`, `AGENTS.md` (at repo root), `examples/`, `tools/`, `bench/corpus/`
 
 **RED:** `tests/unit/test_smoke.py::test_imports` — `import ferrite; assert ferrite.__version__ == "0.1.0.dev0"`. Fails: `ModuleNotFoundError`.
 
-**GREEN:** `uv init`, package layout per TRD §9, empty `pyrt` crate that compiles.
+**GREEN:** package layout per TRD §9, flat `ferrite/` package (not uv's default `src/` layout), empty `pyrt` crate that compiles, staged `ci.yml`.
+
+**Notes — all of these are part of T-001, not later:**
+- `git init` and commit; the repo is not version-controlled until this card.
+- Root `Cargo.toml` `[workspace]` with `members = ["pyrt"]`, `exclude = ["ferrite_out", "tests"]`, and `[workspace.dependencies]` carrying the pinned `pyo3` 0.22 / `indexmap` 2 versions from TRD §2.
+- `pyrt/src/lib.rs` carries `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` from day one. `pyrt` must **not** enable `pyo3/extension-module` (TRD §2).
+- `tests/` and `tests/unit/` are real packages (`__init__.py`) — TESTING.md §4 imports `tests.property.strategies`.
+- Package `__init__.py` files only. Do **not** create empty stub modules for `parse.py`, `emit.py`, etc.; each module file lands with the card that implements it.
+- `ci.yml` carries gates 1–4 of TRD §11 and a comment listing gates 5–9 with their enabling cards. Gates are added by the card that makes them pass.
+- `[project.scripts] ferrite = "ferrite.cli:app"` is added by **T-006**, when `cli.py` exists.
 
 **Acceptance:**
 ```bash
-uv run pytest tests/unit/test_smoke.py && cargo build -p pyrt
+uv sync
+uv run pytest tests/unit/test_smoke.py
+cargo build -p pyrt
+uv run ruff check . && uv run mypy ferrite/
 ```
 
 ---
@@ -144,7 +156,9 @@ uv run pytest tests/unit/test_smoke.py && cargo build -p pyrt
 **Depends on:** T-004
 **Files:** `ferrite/verify/capture.py`
 
-**RED:** `tests/harness/test_capture.py` — running the fixture suite produces a JSON file with one record per test containing `nodeid`, `outcome`, `exception_type`, `exception_msg`, `duration`.
+**RED:** `tests/harness/test_capture.py` — running the fixture suite produces a JSON file with one record per test containing `nodeid`, `outcome`, `exception_type`, `exception_msg`, `duration`, and `calls`: a list of `{func, args, returns}` captured by wrapping the module's public callables after import. Fails: no such file.
+
+**Why `calls` is required:** TRD §7 step 5 compares return values, and TESTING.md §5 compares floats nested inside returned containers. Without per-call return capture there is nothing to compare — outcome-only capture would let a function return a wrong value and still pass.
 
 **GREEN:** a `pytest_runtest_makereport` hook writing `ferrite_results.json`.
 
@@ -154,10 +168,11 @@ uv run pytest tests/unit/test_smoke.py && cargo build -p pyrt
 **Files:** `ferrite/verify/harness.py`, `ferrite/cli.py`
 
 **RED:** `tests/harness/test_verify_e2e.py`:
-- `test_identical_impls_pass` — verify on the fixture exits 0
+- `test_identical_impls_pass` — `ferrite verify tests/harness/fixtures/fib/fib.py --tests tests/harness/fixtures/fib/test_fib.py` exits 0
 - `test_divergent_impl_fails` — deliberately break the hand-written Rust (return `n+1`), verify exits 1 and the report names the diverging test
+- `test_missing_tests_flag` — omitting `--tests` exits non-zero with `FE404`
 
-**GREEN:** implement TRD §7 steps 1–6. `maturin build --release`, run both suites, diff, render.
+**GREEN:** implement TRD §7 steps 1–6. `maturin build --release`, run both suites, diff, render. `--tests` accepts a file or a directory; it is required.
 
 > **M0 EXIT GATE:** `ferrite verify tests/harness/fixtures/fib` passes, and *detects a deliberately introduced bug*. Do not proceed to M1 until the second half is true. A harness that can't catch a bug is worse than no harness.
 
@@ -193,7 +208,7 @@ add_i64(i64::MAX, 1) -> OverflowError
 ---
 ### T-012 — Type model + annotation parser
 **Files:** `ferrite/types/model.py`
-**RED:** `tests/unit/test_type_model.py` — parse `"list[dict[str, int]]"` → `TyList(TyDict(TyStr, TyInt))`; `"Optional[int]"` → `TyOpt(TyInt)`; `"Any"` → raises `FE050`.
+**RED:** `tests/unit/test_type_model.py` — parse `"list[dict[str, int]]"` → `TyList(TyDict(TyStr, TyInt))`; `"Optional[int]"` → `TyOpt(TyInt)`; `"Any"` → raises `FE057`; `"Union[int, str]"` → `FE051`; bare `"list"` → `FE054`.
 **GREEN:** `Type` ADT + parser over `ast.expr` annotations.
 
 ---
@@ -209,16 +224,18 @@ add_i64(i64::MAX, 1) -> OverflowError
     ("def f(*args): pass",     "FE005"),
     ("with open('x') as f: pass", "FE006"),
     ("import numpy",           "FE007"),
+    ("def f() -> None:\n  def g() -> None: pass", "FE025"),
 ])
 def test_rejected(src, code): ...
 ```
+Add a row for **every** code in the FE001–FE049 block of `ERRORS.md` §4 (including `FE011`, `FE015`–`FE018`, `FE019`, `FE026`–`FE036`) — an error with no test that triggers it fails `test_error_catalog_sync.py`.
 **GREEN:** an `ast.NodeVisitor` with an explicit allowlist. **Allowlist, not denylist** — anything unrecognised is rejected by default. This is the single most important defensive decision in the frontend.
 
 ---
 ### T-014 — pyright gate
 **Files:** `ferrite/frontend/validate.py`
-**RED:** a module with a genuine type error → `FE050` carrying pyright's message and span.
-**GREEN:** subprocess `pyright --outputjson`, parse, map diagnostics to `FerriteError`.
+**RED:** a module with a genuine type error → `FE060` carrying pyright's message and span; a module with an unannotated parameter → `FE050`; a module where pyright itself is unavailable → a clear `FerriteError`, never a traceback.
+**GREEN:** subprocess `pyright --outputjson`, parse, map diagnostics to `FerriteError`. R-1's missing-annotation check (`FE050`) lives here too, since it is the same pass.
 
 ---
 ### T-015 — Type inference, scalars
@@ -234,9 +251,11 @@ def test_rejected(src, code): ...
 
 ---
 ### T-017 — Rust AST + emitter
-**Files:** `ferrite/codegen/rust_ast.py`, `ferrite/codegen/emit.py`
+**Files:** `ferrite/codegen/rust_ast.py`, `ferrite/codegen/emit.py`, `ferrite/codegen/mangle.py`
 **RED:** `tests/unit/test_emit.py` — build a `RsFn` by hand, assert the emitted text. Then `tests/golden/F001_arith/` with `input.py`/`expected.rs`.
-**GREEN:** Rust AST dataclasses (`RsFn RsLet RsIf RsWhile RsCall RsBinary RsMatch RsBlock RsTry`) and a pretty printer. Pipe output through `rustfmt` so golden files are stable.
+**GREEN:** Rust AST dataclasses (`RsFn RsLet RsIf RsWhile RsCall RsBinary RsMatch RsBlock RsTry`) and a pretty printer. Pipe output through `rustfmt` so golden files are stable. `mangle.py` owns the SEMANTICS §2.1 name table.
+
+Every `RsNode` carries the `Span` of the FIR node it came from (and therefore the Python span) so the week-9 source map can be threaded through — T-070 depends on this being present from the start.
 
 **Do not build a string-template emitter.** It works for two weeks and then you need parenthesisation rules and it collapses.
 
@@ -253,7 +272,7 @@ Each one is an instance of the §A.3 recipe. Build in this order; each depends o
 | ID | Feature | Conformance fixture | Key emission note |
 |---|---|---|---|
 | T-019 | `def` + `return` + calls | `F001_call` | every fn returns `PyResult`, every call gets `?` |
-| T-020 | arithmetic + comparison | `F002_arith` | all ops route through `pyrt::`, never raw Rust operators |
+| T-020 | arithmetic + comparison + bitwise | `F002_arith` | all arithmetic routes through `pyrt::`, never raw Rust operators; bitwise `& \| ^ ~ << >>` are the documented exception and emit natively on `i64` (SUBSET §4) |
 | T-021 | `if`/`elif`/`else` | `F003_branch` | |
 | T-022 | `while` + `break`/`continue` | `F004_while` | |
 | T-023 | `for i in range(n)` | `F005_range` | `pyrt::range` iterator, handles negative step |
@@ -337,13 +356,14 @@ assert_eq!(a.len(), 4);   // aliasing, exactly like Python
 1. `F021_try_basic` — catch, recover, continue
 2. `F022_try_finally` — `finally` runs on both paths
 3. `F023_try_rethrow` — uncaught kind propagates unchanged
-4. `tests/unit/test_r7_violation.py` — assigning an uninitialised local inside `try` raises `FE011`
+4. `tests/unit/test_r7_violation.py` — a local that the `try` body assigns, that no handler assigns, and that is not initialised before the `try`, raises `FE011`. The `F021_try_basic` fixture in TESTING.md §2 is the *legal* R-7 shape (bound in the body and in every handler) and must pass.
 
-**GREEN:** TRD §3.5 IIFE lowering. Implement the R-7 check in `subset.py` *first*, so the closure design is sound before you write the emitter.
+**GREEN:** TRD §3.5 IIFE lowering. Implement the R-7 check *first* (in `frontend/subset.py`, alongside the other input-contract rules), so the closure design is sound before you write the emitter.
 
 ---
 ### T-052 — `@dataclass` → struct
 **Fixture:** `F024_dataclass`. `PyObj<Foo>` = `Rc<RefCell<Foo>>`; field access goes through `.borrow()`; `__init__` becomes an associated `new`; `frozen=True` becomes a plain value type with `#[derive(Clone, PartialEq)]`.
+**RED also:** assigning to a field of a `frozen=True` dataclass is rejected at lowering with `FE211`, and the fixture shows a frozen dataclass being passed and returned by value.
 
 ---
 ### T-053 — methods on dataclasses
@@ -403,8 +423,8 @@ Go through every FE code. Does the `help` line tell the user what to actually *d
 
 ## M6 — Release (week 10)
 
-- **T-080** — `docs/SUBSET.md` synced to implementation, enforced by `tests/test_subset_doc_sync.py`
-- **T-081** — `docs/SEMANTICS.md` auto-generated from conformance fixtures
+- **T-080** — `docs/SUBSET.md` and `docs/ERRORS.md` synced to implementation, enforced by `tests/test_subset_doc_sync.py` and `tests/test_error_catalog_sync.py`
+- **T-081** — `docs/SEMANTICS.md` §3–§12 example pairs regenerated from `tests/golden/` by `tools/gen_semantics.py`; §14 deviation index cross-checked so every ID-* has a live pinning test
 - **T-082** — README quickstart, validated on a clean container in CI
 - **T-083** — final benchmark run, publish report
 - **T-084** — walk PRD §8 release gate, tick every box

@@ -84,7 +84,9 @@ The crucial property is that overflow is **loud**. Silent wraparound would be a 
 
 **Context.** Rust's `try` blocks are unstable. The `?` operator inside a labelled block still returns from the enclosing *function*, not the block. So there is no direct way to scope error propagation to a region.
 
-**Decision.** A `try` body becomes an immediately-invoked closure returning `PyResult<(locals assigned in the body)>`. The `match` on its result implements the handlers. PSS-0 rule R-7 requires any local assigned inside the body to be initialised before the `try`.
+**Decision.** A `try` body becomes an immediately-invoked closure returning `PyResult<(locals assigned in the body)>`. The `match` on its result implements the handlers. PSS-0 rule **R-7** requires every local the body assigns to be **bound on every path out of the whole `try` statement** — assigned in each `except` handler, or declared and initialised before the `try`.
+
+The 2026-09-16 rewording of R-7 is load-bearing: the original text ("must be declared and initialised before the `try`") contradicted the canonical `try`/`except` example printed in TRD §3.5, SEMANTICS §10.2, and TESTING §2, all three of which bind the local inside the body and in the handler. Under the reworded rule those examples are legal and the closure still yields a value on both arms.
 
 **Why.** It works on stable Rust today, and it composes with `?` naturally. It is only viable *because* of ADR-0002: mutable containers are `Rc`, so the closure clones them into itself and still aliases the originals. Only scalar locals are problematic, which is what R-7 covers.
 
@@ -140,6 +142,24 @@ The crucial property is that overflow is **loud**. Silent wraparound would be a 
 **Rejected alternative.** Runtime type tracing (MonkeyType) to infer annotations automatically. Attractive — it removes the annotation burden entirely — but it adds a "run your tests first" step and infers types that are merely *observed*, not guaranteed. Strong v0.2 candidate as an `--infer-from-tests` flag.
 
 **Revisit when.** User feedback says the annotation requirement is the main adoption blocker. Track this explicitly; it is the most likely thing to be wrong about the MVP's shape.
+
+---
+
+## ADR-0009 — A root Cargo workspace, and `pyrt` does not enable `extension-module`
+
+**Status:** ACCEPTED (2026-09-16)
+
+**Context.** Every Rust command in `AGENTS.md`, `TRD.md` §11, and `PLAN.md` is workspace-scoped — `cargo build -p pyrt`, `cargo test -p pyrt`, `cargo clippy -p pyrt -- -D warnings`. The original TRD §9 layout specified only `pyrt/Cargo.toml`, so none of those commands could have run.
+
+**Decision.** The repository root carries a `[workspace]` `Cargo.toml` with `members = ["pyrt"]`, `exclude = ["ferrite_out", "tests"]`, and `[workspace.dependencies]` pinning `pyo3` 0.22 and `indexmap` 2. `pyrt` does **not** enable `pyo3/extension-module`; generated crates do.
+
+**Why.** Two separate reasons, both easy to undo by accident:
+- The `exclude` list is load-bearing. A generated crate under `ferrite_out/` and the hand-written fixture crate under `tests/harness/fixtures/fib/fib_rs/` are standalone crates that must not be adopted into the workspace, or `cargo build -p pyrt` starts trying to build them.
+- `pyo3/extension-module` suppresses linking libpython. `pyrt` must stay unit-testable on the Rust side with plain `cargo test -p pyrt` (TRD §4), so it must not enable it. The asymmetry with generated crates is deliberate.
+
+**Rejected alternative.** `cargo build --manifest-path pyrt/Cargo.toml` everywhere. It works, but it silently invalidates every `-p pyrt` command already written into three documents.
+
+**Revisit when.** The frontend is rewritten in Rust (ADR-0001) and the workspace gains a second real member.
 
 ---
 

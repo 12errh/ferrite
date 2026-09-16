@@ -1,6 +1,6 @@
 # AGENTS.md — operating manual
 
-> Place this file at the **repository root**, not in `docs/`. Claude Code, Cursor, and most agent harnesses look for it there.
+> This file lives at the **repository root**, not in `docs/`. Claude Code, Cursor, and most agent harnesses look for it there. If you ever find it under `docs/`, it has been moved there by mistake — move it back.
 
 You are working on **Ferrite**, a Python-to-Rust transpiler. Read this file completely before your first edit.
 
@@ -13,8 +13,13 @@ You are working on **Ferrite**, a Python-to-Rust transpiler. Read this file comp
 3. `docs/PLAN.md` §A — the TDD doctrine
 4. Your assigned task card in `docs/PLAN.md` Part B
 5. `docs/SUBSET.md` — only if your task touches the accepted Python grammar
+6. `docs/SEMANTICS.md` — only if your task touches emission
+7. `docs/ERRORS.md` — if your task raises or adds a diagnostic code
+8. `docs/DECISIONS.md` — **before** you conclude that a design choice is wrong
 
 Do not read the whole codebase first. Read the task card, then the two or three files it names.
+
+If two documents disagree, the narrower one wins: `SUBSET.md` over `PRD.md`, `ERRORS.md` over `PLAN.md`, `TRD.md` over everything except a `[LOCKED]`-tagged ADR in `DECISIONS.md`. Report the disagreement rather than silently picking one.
 
 ---
 
@@ -40,19 +45,21 @@ The subset gate is an allowlist. Any Python construct not explicitly allowed is 
 ## Commands
 
 ```bash
-uv sync                                   # install
+uv sync                                   # install (maturin + pyright come from the dev group)
 uv run pytest                             # everything
+uv run pytest tests/unit                  # fast, no subprocess, no cargo
 uv run pytest tests/golden                # codegen determinism
 uv run pytest tests/conformance -k F021   # one conformance fixture
 uv run pytest --snapshot-update           # regenerate goldens (READ THE DIFF)
+cargo build -p pyrt
 cargo test -p pyrt                        # runtime unit tests
 cargo clippy -p pyrt -- -D warnings
 uv run ruff check . && uv run mypy ferrite/
 uv run python bench/report.py             # S1–S6 table
 
-uv run ferrite build   examples/scoring.py
-uv run ferrite verify  examples/scoring.py --tests tests/test_scoring.py
-uv run ferrite fuzz    examples/scoring.py
+uv run ferrite build   examples/collatz.py
+uv run ferrite verify  examples/collatz.py --tests examples/test_collatz.py
+uv run ferrite fuzz    examples/collatz.py
 ```
 
 ---
@@ -86,6 +93,8 @@ This is the whole job for M1–M3. Follow it exactly, in order:
 | Mutating a list while iterating it | borrow panic, or divergence | `ForEach` always snapshots (TRD §3.7) |
 | Forgetting `?` on a call | type error, or worse, a swallowed error | every `Call`/`MethodCall` with `fallible=True` emits `?` |
 | Dropping the source span | week-9 repair loop can't map errors back | every `RsNode` carries the `Span` of its FIR node |
+| A user identifier starting with `__` | collides with an emitter temporary (`__t0`, `__v`, `__e`, `__s`) | rejected by R-19 (`FE036`); never emit an unqualified temporary |
+| Touching a field of a `frozen=True` dataclass | rejected at lowering, not silently `PyObj`-wrapped | `FE211` |
 | String indexing in a loop | O(n²) | emit a perf warning; don't silently accept |
 
 ---
@@ -101,8 +110,10 @@ This is the whole job for M1–M3. Follow it exactly, in order:
 ## When you get stuck
 
 1. Look at `tests/harness/fixtures/fib/fib_rs/` — the hand-written reference crate. It shows the emission style for the common cases.
-2. Check `docs/TRD.md` §3 — the mapping table is normative.
-3. If the task card's RED section is ambiguous, **ask**. Do not invent a test that happens to match what you were going to build. That is the failure mode where TDD stops working and nobody notices for three weeks.
+2. Check `docs/SEMANTICS.md` §3–§12 — the emission cookbook, normative, with a worked example per construct.
+3. Check `docs/TRD.md` §3 — the mapping table is normative.
+4. Before "fixing" a design decision, read `docs/DECISIONS.md`. If your fix is not covered by a "Revisit when" trigger, propose an ADR instead of changing code.
+5. If the task card's RED section is ambiguous, **ask**. Do not invent a test that happens to match what you were going to build. That is the failure mode where TDD stops working and nobody notices for three weeks.
 
 ---
 

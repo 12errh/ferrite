@@ -353,7 +353,11 @@ let x: i64 = match __t0 {
 };
 ```
 
-Why this works: the closure returns the values assigned inside the `try` body. Mutable containers are `Rc`, so the closure clones them freely and still aliases the originals. The only thing that would break is a *scalar* local mutated inside `try` and read after, which is exactly what R-7 forbids.
+Why this works: the closure returns the values assigned inside the `try` body. Mutable containers are `Rc`, so the closure clones them freely and still aliases the originals. What would break is a *scalar* local that the body assigns and a handler does not, because the `Err` arm would then have no value to yield — that is exactly what **R-7** forbids (`FE011`).
+
+If a handler does not assign such a local, it must be declared and initialised before the `try`, and the `Err` arm yields the pre-`try` value. Partial mutations performed by a body that then failed are therefore **not** observable for scalar locals. This is a consequence of the R-7 contract, not an undocumented divergence: the rule that forces pre-initialisation is what makes the simplification sound to state.
+
+`__t0`, `__v`, `__e`, `__s` and `__t` are emitter temporaries. User identifiers starting with `__` are rejected (R-19) so these can never collide.
 
 Multiple assignments in the body return a tuple:
 
@@ -433,7 +437,7 @@ Notes:
 - `Point(1.0, 2.0)` emits `Point::new(1.0, 2.0)`.
 - `self` is `PyObj<Self>` **by value**, consistent with §3. Not `&self`, not `&mut self`.
 - Each field write takes and releases its own `borrow_mut` in a scoped block. Verbose, but it makes Rule 3 mechanical — no borrow can span a call.
-- `frozen=True` drops `PyObj` and emits a plain value struct. Field writes on a frozen dataclass are rejected at lowering (`FE035`).
+- `frozen=True` drops `PyObj` and emits a plain value struct. Field writes on a frozen dataclass are rejected at lowering (`FE211`).
 - `field(default_factory=list)` emits a fresh container in `new`.
 
 ---
@@ -463,6 +467,8 @@ Notes:
 | `math.sqrt(x)` | `f64::sqrt(x)` |
 | `math.floor(x)` | `pyrt::floor(x)` → `i64` |
 | `math.pi` | `std::f64::consts::PI` |
+
+The full allowed `math` surface is SUBSET.md §1.1; every member maps 1:1 to an `f64` method (`sin`, `cos`, `tan`, `log`, `log2`, `log10`, `exp`, `sqrt`, `hypot`, `isnan`, `isinf`, `isclose`) or an `std::f64::consts` constant (`PI`, `E`, `TAU`, `INFINITY`, `NAN`). `math.floor` / `math.ceil` are the two exceptions: they return `i64` via `pyrt::floor` / `pyrt::ceil`. Any `math` member outside §1.1 is rejected at the subset gate (`FE008`), never mapped approximately.
 
 ---
 

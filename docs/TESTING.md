@@ -36,7 +36,9 @@ tests/
     └── test_verify_e2e.py
 ```
 
-`tests/harness/` is easy to skip and shouldn't be. It tests the thing that tests everything else. A silently broken harness produces green CI and a worthless product.
+`tests/` is easy to skip and shouldn't be. It tests the thing that tests everything else. A silently broken harness produces green CI and a worthless product.
+
+**`tests/__init__.py` and `tests/unit/__init__.py` are required**, not cosmetic: `tests/property/` does `from tests.property.strategies import strategy_for` (§4), so `tests` must be an importable package rather than a namespace directory.
 
 ---
 
@@ -69,6 +71,7 @@ def test_whitespace():     assert mod.parse_or_default("  12  ", 0) == 12
 
 **Rules:**
 
+0. **R-7 check.** This fixture is the canonical *legal* shape: `n` is assigned in the `try` body **and** in the handler, so both the `Ok` and the `Err` arm have a value to yield. If a body assigns a local that no handler assigns, that local must be declared and initialised before the `try` (R-7 → `FE011`). Fixtures in the other shape are rejected, not transpiled.
 1. **`test_mod.py` imports `mod`, never `ferrite`.** The harness swaps the implementation behind the import. If the test knows which implementation it's running, it isn't a conformance test.
 2. **One feature per fixture.** `F021` tests `try`/`except`. It does not also test dicts. When it fails you want to know what broke.
 3. **Cover the error path.** A feature's failure mode is where Python and Rust diverge most. If a fixture has no test that raises, it is incomplete.

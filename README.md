@@ -111,6 +111,7 @@ Two feedback loops: `cargo` errors go back to codegen, behavioural divergences g
 | S3 **conformance rate** | **100%** | — |
 | S4 median speedup | ≥ 10× | — |
 | S5 false successes | **0** | — |
+| S6 clippy-clean output | ≥ 90% of S2 | — |
 
 S3 and S5 are non-negotiable. If conformance is 98%, we don't ship — silently wrong output is worse than no product.
 
